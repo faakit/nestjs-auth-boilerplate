@@ -4,14 +4,22 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { User } from './users.entity';
+import { User } from './user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserRole } from './user-roles.enum';
 import { randomBytes } from 'crypto';
 import { genSalt, hash } from 'bcrypt';
+import { InjectRepository } from '@nestjs/typeorm';
 
 @Injectable()
 export class UserRepository extends Repository<User> {
+  constructor(
+    @InjectRepository(User)
+    repository: Repository<User>,
+  ) {
+    super(repository.target, repository.manager, repository.queryRunner);
+  }
+
   async createUser(
     createUserDto: CreateUserDto,
     role: UserRole,
@@ -23,7 +31,8 @@ export class UserRepository extends Repository<User> {
       email,
       role,
       status: true,
-      confirmationToken: randomBytes(32).toString('hex'),
+      confirmationToken:
+        role === UserRole.ADMIN ? null : randomBytes(32).toString('hex'),
       salt: await genSalt(),
       password: await hash(password, await genSalt()),
     });
@@ -37,7 +46,7 @@ export class UserRepository extends Repository<User> {
       return user;
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') {
-        throw new ConflictException('Email already exists');
+        throw new ConflictException('E-mail já cadastrado!');
       } else {
         throw new InternalServerErrorException('Internal server error');
       }
