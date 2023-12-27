@@ -1,4 +1,8 @@
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserRepository } from './users.repository';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -11,7 +15,7 @@ export class UsersService {
     private readonly userRepository: UserRepository,
   ) {}
 
-  createAdminUser(createUserDto: CreateUserDto) {
+  async createAdminUser(createUserDto: CreateUserDto) {
     if (createUserDto.password !== createUserDto.passwordConfirmation) {
       throw new UnprocessableEntityException(
         'A confirmação deve ser igual à senha.',
@@ -19,5 +23,15 @@ export class UsersService {
     }
 
     return this.userRepository.createUser(createUserDto, UserRole.ADMIN);
+  }
+
+  async findUserById(id: number) {
+    const user = await this.userRepository.findOne({ where: { id } });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    return user;
   }
 }
