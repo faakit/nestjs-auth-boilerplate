@@ -10,6 +10,7 @@ import { UserRole } from './user-roles.enum';
 import { randomBytes } from 'crypto';
 import { genSalt, hash } from 'bcrypt';
 import { InjectRepository } from '@nestjs/typeorm';
+import { CredentialsDto } from '../auth/dto/credentials.dto';
 
 @Injectable()
 export class UserRepository extends Repository<User> {
@@ -26,6 +27,8 @@ export class UserRepository extends Repository<User> {
   ): Promise<User> {
     const { email, name, password } = createUserDto;
 
+    const salt = await genSalt();
+
     const user = this.create({
       name,
       email,
@@ -33,8 +36,8 @@ export class UserRepository extends Repository<User> {
       status: true,
       confirmationToken:
         role === UserRole.ADMIN ? null : randomBytes(32).toString('hex'),
-      salt: await genSalt(),
-      password: await hash(password, await genSalt()),
+      salt,
+      password: await hash(password, salt),
     });
 
     try {
@@ -49,8 +52,20 @@ export class UserRepository extends Repository<User> {
       if (error.code === 'ER_DUP_ENTRY') {
         throw new ConflictException('E-mail já cadastrado!');
       } else {
-        throw new InternalServerErrorException('Internal server error');
+        throw new InternalServerErrorException('Erro interno do servidor!');
       }
     }
+  }
+
+  async checkCredentials(credentialsDto: CredentialsDto): Promise<User> {
+    const { email, password } = credentialsDto;
+
+    const user = await this.findOne({ where: { email, status: true } });
+
+    if (user && (await user.checkPassword(password))) {
+      return user;
+    }
+
+    return null;
   }
 }
