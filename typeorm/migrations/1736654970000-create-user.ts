@@ -1,3 +1,4 @@
+import { genSalt, hash } from 'bcrypt';
 import { MigrationInterface, QueryRunner, Table } from 'typeorm';
 
 export class CreateUser1736654970000 implements MigrationInterface {
@@ -50,6 +51,15 @@ export class CreateUser1736654970000 implements MigrationInterface {
           },
         ],
       }),
+    );
+
+    // Create the first account user with admin/admin credentials
+    const salt = await genSalt();
+    const email = 'admin@admin.com';
+    const password = await hash('admin', salt);
+
+    await queryRunner.query(
+      `INSERT INTO user (email, role, password, salt) VALUES ('${email}', 'admin', '${password}', '${salt}')`,
     );
   }
 
