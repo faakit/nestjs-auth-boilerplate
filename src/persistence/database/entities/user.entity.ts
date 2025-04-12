@@ -7,38 +7,34 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
-import { UserRole } from './user-roles.enum';
 import { hash } from 'bcrypt';
+import { UserRole } from 'src/shared/enums/roles.enum';
 
 @Entity()
 @Unique(['email'])
-export class User extends BaseEntity {
+export class UserEntity extends BaseEntity {
   @PrimaryGeneratedColumn()
   id: number;
 
   @Column({ nullable: false, type: 'varchar', length: 255 })
   email: string;
 
-  @Column({ nullable: false, type: 'varchar', length: 200 })
-  name: string;
-
-  @Column({ nullable: false, type: 'varchar', length: 20 })
+  @Column({
+    nullable: false,
+    type: 'varchar',
+    length: 20,
+    default: UserRole.USER,
+  })
   role: UserRole;
 
+  @Column({ nullable: false })
+  password?: string;
+
+  @Column({ nullable: false })
+  salt?: string;
+
   @Column({ nullable: false, default: true })
-  status: boolean;
-
-  @Column({ nullable: false })
-  password: string;
-
-  @Column({ nullable: false })
-  salt: string;
-
-  @Column({ nullable: true, type: 'varchar', length: 64 })
-  confirmationToken: string;
-
-  @Column({ nullable: true, type: 'varchar', length: 64 })
-  recoverToken: string;
+  active: boolean;
 
   @CreateDateColumn()
   createdAt: Date;
@@ -47,7 +43,7 @@ export class User extends BaseEntity {
   updatedAt: Date;
 
   async checkPassword(password: string): Promise<boolean> {
-    const passHash = await hash(password, this.salt);
+    const passHash = await hash(password, this.salt!);
 
     return passHash === this.password;
   }

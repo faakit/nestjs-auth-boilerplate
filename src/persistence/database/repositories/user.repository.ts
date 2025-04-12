@@ -1,58 +1,56 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { Repository } from 'typeorm';
-import { User } from './user.entity';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UserRole } from './user-roles.enum';
-import { randomBytes } from 'crypto';
+import { QueryRunner, Repository } from 'typeorm';
 import { genSalt, hash } from 'bcrypt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { CredentialsDto } from '../auth/dto/credentials.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { FindUsersQueryDto } from './dto/find-users-query.dto';
+import { UserEntity } from '../entities/user.entity';
+import { UserRole } from 'src/shared/enums/roles.enum';
 
 @Injectable()
-export class UserRepository extends Repository<User> {
+export class UserRepository extends Repository<UserEntity> {
   constructor(
-    @InjectRepository(User)
-    repository: Repository<User>,
+    @InjectRepository(UserEntity)
+    repository: Repository<UserEntity>,
   ) {
     super(repository.target, repository.manager, repository.queryRunner);
   }
 
   async createUser(
-    createUserDto: CreateUserDto,
-    role: UserRole,
-  ): Promise<User> {
-    const { email, name, password } = createUserDto;
+    createUserDto: { email: string; password: string },
+    role: UserRole = UserRole.USER,
+    queryRunner: QueryRunner,
+  ): Promise<UserEntity> {
+    const { email, password } = createUserDto;
 
     const salt = await genSalt();
 
     const user = this.create({
-      name,
       email,
       role,
-      status: true,
-      confirmationToken:
-        role === UserRole.ADMIN ? null : randomBytes(32).toString('hex'),
       salt,
       password: await hash(password, salt),
     });
 
     try {
-      await user.save();
+      await queryRunner.manager.save(user);
 
       delete user.password;
       delete user.salt;
-      delete user.confirmationToken;
 
       return user;
     } catch (error) {
-      if (error.code === 'ER_DUP_ENTRY') {
+      // type the typeorm postgres error to fix type errors
+
+      if (
+        error.detail.includes('already exists') &&
+        error.detail.includes('email')
+      ) {
         throw new ConflictException('E-mail já cadastrado!');
       } else {
         throw new InternalServerErrorException('Erro interno do servidor!');
@@ -60,8 +58,12 @@ export class UserRepository extends Repository<User> {
     }
   }
 
-  async updateUser(id: number, updateUserDto: UpdateUserDto) {
-    const { role, status, email, name, password } = updateUserDto;
+  async updateUser(
+    id: number,
+    updateUserDto: { email?: string; password?: string },
+    queryRunner: QueryRunner,
+  ) {
+    const { password, email } = updateUserDto;
 
     const user = await this.findOne({ where: { id } });
 
@@ -69,10 +71,7 @@ export class UserRepository extends Repository<User> {
       throw new NotFoundException('Usuário não encontrado!');
     }
 
-    user.name = name ? name : user.name;
     user.email = email ? email : user.email;
-    user.role = role ? role : user.role;
-    user.status = status === undefined ? user.status : status;
 
     if (password) {
       const salt = await genSalt();
@@ -82,9 +81,12 @@ export class UserRepository extends Repository<User> {
     }
 
     try {
-      await user.save();
+      await queryRunner.manager.save(user);
     } catch (error) {
-      if (error.code === 'ER_DUP_ENTRY') {
+      if (
+        error.detail.includes('already exists') &&
+        error.detail.includes('email')
+      ) {
         throw new ConflictException('E-mail já cadastrado!');
       } else {
         throw new InternalServerErrorException('Erro interno do servidor!');
@@ -92,10 +94,13 @@ export class UserRepository extends Repository<User> {
     }
   }
 
-  async checkCredentials(credentialsDto: CredentialsDto): Promise<User> {
+  async checkCredentials(credentialsDto: {
+    email: string;
+    password: string;
+  }): Promise<UserEntity | null> {
     const { email, password } = credentialsDto;
 
-    const user = await this.findOne({ where: { email, status: true } });
+    const user = await this.findOne({ where: { email } });
 
     if (user && (await user.checkPassword(password))) {
       return user;
@@ -104,12 +109,42 @@ export class UserRepository extends Repository<User> {
     return null;
   }
 
-  async findUsers(queryDto: FindUsersQueryDto) {
-    queryDto.status = queryDto.status === undefined ? true : queryDto.status;
+  async findUserById(
+    id: number,
+    options?: { includeProfile?: boolean; includeStorage?: boolean },
+  ) {
+    const relations: string[] = [];
+
+    if (options?.includeProfile) {
+      relations.push('profile');
+    }
+    if (options?.includeStorage) {
+      relations.push('storage');
+    }
+
+    const user = await this.findOne({
+      where: { id },
+      select: ['email', 'role', 'id', 'createdAt', 'updatedAt'],
+      relations,
+    });
+
+    return user;
+  }
+
+  async findUsers(
+    queryDto: {
+      page: number;
+      limit: number;
+      sort?: string;
+      email?: string;
+      role?: UserRole;
+    },
+    status: boolean,
+  ) {
     queryDto.page = queryDto.page < 1 ? 1 : queryDto.page;
     queryDto.limit = queryDto.limit > 100 ? 100 : queryDto.limit;
 
-    const { email, name, status, role } = queryDto;
+    const { email, role } = queryDto;
     const query = this.createQueryBuilder('user');
     query.where('user.status = :status', { status });
 
@@ -117,17 +152,13 @@ export class UserRepository extends Repository<User> {
       query.andWhere('user.email ILIKE :email', { email: `%${email}%` });
     }
 
-    if (name) {
-      query.andWhere('user.name ILIKE :name', { name: `%${name}%` });
-    }
-
     if (role) {
       query.andWhere('user.role = :role', { role });
     }
 
-    console.log(queryDto.page, queryDto.limit);
     query.skip((queryDto.page - 1) * queryDto.limit);
     query.take(+queryDto.limit);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     query.orderBy(queryDto.sort ? JSON.parse(queryDto.sort) : undefined);
     query.select(['user.name', 'user.email', 'user.role', 'user.status']);
 
